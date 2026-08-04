@@ -1,0 +1,6 @@
+{
+  "name": "Team Elite Stats",
+  "description": "Pro esports real-time tournament scoring dashboard for TEAM ELITE",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

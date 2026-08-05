@@ -1,19 +1,22 @@
 
 import { Match, Tournament, ScheduleItem, Player, SystemSettings, TournamentWeek } from '@/types';
+import { addAuthHeaders, handleAuthError } from '@/lib/clientAuth';
 
 // ── API Helper ──────────────────────────────────────────────────────
 const apiFetch = async (endpoint: string, options?: RequestInit) => {
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 20000);
+  const timeoutId = setTimeout(() => controller.abort(), 5000);
 
   try {
     const response = await fetch(endpoint, {
       ...options,
+      headers: addAuthHeaders(options?.headers),
       signal: controller.signal
     });
     clearTimeout(timeoutId);
 
     if (!response.ok) {
+      handleAuthError(response.status);
       console.error(`API Error (${response.status}) at ${endpoint}`);
       return null;
     }
@@ -49,40 +52,27 @@ const setLocal = <T>(key: string, value: T) => {
 };
 
 // ── Matches (Hybrid Persistence with LocalStorage Backup) ───────────
-export const getMatches = async (all: boolean = false, tournamentId?: string): Promise<Match[]> => {
-  // If tournamentId is specified, fetch only that tournament's matches (faster for mobile)
-  const url = all ? '/api/matches?all=true'
-    : tournamentId ? `/api/matches?tournamentId=${tournamentId}`
-    : '/api/matches';
+export const getMatches = async (all: boolean = false): Promise<Match[]> => {
+  const url = all ? '/api/matches?all=true' : '/api/matches';
   const data = await apiFetch(url);
+  const local = getLocal<Match>('s8ul_matches');
 
   if (Array.isArray(data) && data.length > 0) {
-    // Cache per-tournament in localStorage
-    if (!all && tournamentId) {
-      const allLocal = getLocal<Match>('s8ul_matches');
-      const merged = new Map<string, Match>();
-      allLocal.forEach(m => merged.set(m.id, m));
-      data.forEach((m: Match) => merged.set(m.id, m));
-      setLocal('s8ul_matches', Array.from(merged.values()));
-    } else {
-      setLocal('s8ul_matches', data);
-    }
+    setLocal('s8ul_matches', data);
     return data;
   }
 
-  // Fallback: use localStorage cached data
-  const local = getLocal<Match>('s8ul_matches');
   if (local.length > 0) {
-    // Filter to specific tournament if requested
-    return tournamentId ? local.filter(m => m.tournamentId === tournamentId) : local;
+    // Sync local items to server memory if server was restarted
+    Promise.all(local.map(m => apiFetch('/api/matches', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(m)
+    }))).catch(() => {});
+    return local;
   }
 
-  return [];
-};
-
-export const getMatchesForTournament = (tournamentId: string): Match[] => {
-  const local = getLocal<Match>('s8ul_matches');
-  return local.filter(m => m.tournamentId === tournamentId);
+  return (data && Array.isArray(data)) ? data : [];
 };
 
 export const saveMatch = async (match: Match): Promise<void> => {

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/lib/db';
+import { requireAuth } from '@/lib/auth';
 
 export async function GET() {
     try {
@@ -34,6 +35,8 @@ export async function GET() {
 
 export async function POST(request: NextRequest) {
     try {
+        const auth = await requireAuth(request);
+        if (auth instanceof NextResponse) return auth;
         const { db } = await getDb();
         const collection = db.collection('tournaments');
         const tournament = await request.json();
@@ -51,6 +54,8 @@ export async function POST(request: NextRequest) {
 
 export async function PATCH(request: NextRequest) {
     try {
+        const auth = await requireAuth(request);
+        if (auth instanceof NextResponse) return auth;
         const { db } = await getDb();
         const collection = db.collection('tournaments');
         const { searchParams } = new URL(request.url);
@@ -72,6 +77,8 @@ export async function PATCH(request: NextRequest) {
 
 export async function DELETE(request: NextRequest) {
     try {
+        const auth = await requireAuth(request);
+        if (auth instanceof NextResponse) return auth;
         const { db } = await getDb();
         const { searchParams } = new URL(request.url);
         const id = searchParams.get('id');

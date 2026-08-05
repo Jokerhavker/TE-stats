@@ -2,12 +2,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-
-interface RateLimitData {
-  attempts: number;
-  lastAttempt: number;
-  blockedUntil?: number;
-}
+import { setAuthSession } from '@/lib/clientAuth';
 
 const AdminLoginPage = () => {
   const [password, setPassword] = useState('');
@@ -16,78 +11,32 @@ const AdminLoginPage = () => {
   const [errorMessage, setErrorMessage] = useState('Invalid Authorization Token');
   const [isBlocked, setIsBlocked] = useState(false);
   const [remainingTime, setRemainingTime] = useState(0);
+  const [isLoading, setIsLoading] = useState(false);
   const router = useRouter();
 
-  const RATE_LIMIT_KEY = 's8ul_rate_limit';
-  const MAX_ATTEMPTS = 5;
-  const BLOCK_DURATION = 24 * 60 * 60 * 1000; // 24 hours in milliseconds
-
-  // Check rate limit status on component mount and set up interval
+  // If already logged in, redirect to admin dashboard.
+  // Otherwise run the block countdown.
   useEffect(() => {
-    const checkRateLimit = () => {
-      const storedData = localStorage.getItem(RATE_LIMIT_KEY);
-      const now = Date.now();
-
-      if (storedData) {
-        const rateLimitData: RateLimitData = JSON.parse(storedData);
-
-        // Check if user is currently blocked
-        if (rateLimitData.blockedUntil && rateLimitData.blockedUntil > now) {
-          setIsBlocked(true);
-          const remaining = Math.ceil((rateLimitData.blockedUntil - now) / 1000);
-          setRemainingTime(remaining);
-        } else if (rateLimitData.blockedUntil && rateLimitData.blockedUntil <= now) {
-          // Block period has expired, reset the data
-          localStorage.removeItem(RATE_LIMIT_KEY);
-          setIsBlocked(false);
-        }
-      }
-    };
-
-    checkRateLimit();
-
-    // If already logged in, redirect to admin dashboard
     const role = sessionStorage.getItem('s8ul_user_role');
     if (role === 'admin' || role === 'ledger') {
       router.push('/admin');
+      return;
     }
 
-    // Set up interval to update remaining time
     const interval = setInterval(() => {
-      checkRateLimit();
+      setRemainingTime(prev => (prev > 0 ? prev - 1 : prev));
     }, 1000);
 
     return () => clearInterval(interval);
   }, [router]);
 
-  const getRateLimitData = (): RateLimitData => {
-    const storedData = localStorage.getItem(RATE_LIMIT_KEY);
-    return storedData ? JSON.parse(storedData) : { attempts: 0, lastAttempt: 0 };
-  };
-
-  const updateRateLimit = (isFailure: boolean) => {
-    const now = Date.now();
-    const rateLimitData = getRateLimitData();
-
-    if (isFailure) {
-      rateLimitData.attempts += 1;
-      rateLimitData.lastAttempt = now;
-
-      if (rateLimitData.attempts >= MAX_ATTEMPTS) {
-        rateLimitData.blockedUntil = now + BLOCK_DURATION;
-      }
-
-      localStorage.setItem(RATE_LIMIT_KEY, JSON.stringify(rateLimitData));
-
-      if (rateLimitData.attempts >= MAX_ATTEMPTS) {
-        setIsBlocked(true);
-        setRemainingTime(Math.ceil(BLOCK_DURATION / 1000));
-      }
-    } else {
-      // Reset on successful login
-      localStorage.removeItem(RATE_LIMIT_KEY);
+  // Lift the block once the server-side countdown reaches zero.
+  useEffect(() => {
+    if (isBlocked && remainingTime === 0) {
+      setIsBlocked(false);
+      setError(false);
     }
-  };
+  }, [isBlocked, remainingTime]);
 
   const formatRemainingTime = (seconds: number): string => {
     const hours = Math.floor(seconds / 3600);
@@ -103,13 +52,11 @@ const AdminLoginPage = () => {
     }
   };
 
-  const [isLoading, setIsLoading] = useState(false);
-
-  const handleLogin = (e: React.FormEvent) => {
+  const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsLoading(true);
 
-    // Check if user is blocked
+    // Client-side block guard (authoritative block is enforced server-side)
     if (isBlocked) {
       setError(true);
       setErrorMessage(`Access Blocked - Try again in ${formatRemainingTime(remainingTime)}`);
@@ -119,27 +66,37 @@ const AdminLoginPage = () => {
       return;
     }
 
-    if (password === 'tstp@8thg9@22k0' || password === 's8ulledger') {
-      const role = password === 'tstp@8thg9@22k0' ? 'admin' : 'ledger';
-      sessionStorage.setItem('s8ul_user_role', role);
-      updateRateLimit(false); // Reset rate limit on success
-      window.dispatchEvent(new CustomEvent('admin_login_success'));
-      router.push('/admin');
-    } else {
+    try {
+      const res = await fetch('/api/auth', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ password }),
+      });
+      const data = await res.json().catch(() => ({}));
+
+      if (res.ok && data.token && (data.role === 'admin' || data.role === 'ledger')) {
+        setAuthSession(data.token, data.role, data.sessionId);
+        window.dispatchEvent(new CustomEvent('admin_login_success'));
+        router.push('/admin');
+        return;
+      }
+
+      if (res.status === 429) {
+        setIsBlocked(true);
+        setRemainingTime(data.retryAfterSeconds || 86400);
+        setError(true);
+        setErrorMessage('Access Blocked - Try again later');
+        setIsLoading(false);
+        setPassword('');
+        return;
+      }
+
       setLoginShake(true);
       setError(true);
-      setErrorMessage('Invalid Authorization Token');
-      updateRateLimit(true); // Increment failed attempts
-
-      const rateLimitData = getRateLimitData();
-      const attemptsRemaining = MAX_ATTEMPTS - rateLimitData.attempts;
-
-      if (attemptsRemaining > 0 && attemptsRemaining < MAX_ATTEMPTS) {
-        setErrorMessage(`Invalid Authorization Token - ${attemptsRemaining} attempt(s) remaining`);
-      } else if (attemptsRemaining <= 0) {
-        setIsBlocked(true);
-        setErrorMessage(`Access Blocked for 24 hours - Too many failed attempts`);
-        setRemainingTime(Math.ceil(BLOCK_DURATION / 1000));
+      if (res.status === 401 && data.attemptsRemaining != null) {
+        setErrorMessage(`Invalid Authorization Token - ${data.attemptsRemaining} attempt(s) remaining`);
+      } else {
+        setErrorMessage('Invalid Authorization Token');
       }
 
       setTimeout(() => {
@@ -147,6 +104,15 @@ const AdminLoginPage = () => {
         setError(false);
         setIsLoading(false);
         setPassword('');
+      }, 600);
+    } catch {
+      setLoginShake(true);
+      setError(true);
+      setErrorMessage('Network error - please try again');
+      setTimeout(() => {
+        setLoginShake(false);
+        setError(false);
+        setIsLoading(false);
       }, 600);
     }
   };

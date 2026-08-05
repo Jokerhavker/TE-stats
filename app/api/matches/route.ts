@@ -1,46 +1,49 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/lib/db';
+import { requireAuth } from '@/lib/auth';
 
 export async function GET(request: NextRequest) {
     try {
         const { db, isMongo } = await getDb();
-        const { searchParams } = new URL(request.url);
-        const tournamentId = searchParams.get('tournamentId');
-        const all = searchParams.get('all') === 'true';
+        console.log(`[GET /api/matches] Database connection status - isMongo: ${isMongo}`);
 
-        // Build query filter - if tournamentId is provided, only fetch that tournament's matches
-        const query: any = {};
-        if (tournamentId && !all) {
-            query.tournamentId = tournamentId;
-        }
-
-        console.log(`[GET /api/matches] Fetching matches${tournamentId ? ` for tournament ${tournamentId}` : ' (all)'} - isMongo: ${isMongo}`);
-
-        const matches = await db.collection('matches').find(query).sort({ timestamp: -1 }).toArray();
-        console.log(`[GET /api/matches] Retrieved ${matches?.length || 0} match documents`);
+        const matches = await db.collection('matches').find({}).sort({ timestamp: -1 }).toArray();
+        console.log(`[GET /api/matches] Retrieved ${matches?.length || 0} match documents from ${isMongo ? 'MongoDB' : 'In-Memory DB'}`);
 
         if (!matches || matches.length === 0) {
+            console.warn('[GET /api/matches] Warning: Database returned empty matches array or no records found.');
             return NextResponse.json([], {
                 headers: { 'Cache-Control': 'no-store, max-age=0' }
             });
         }
 
-        const cleanMatches = matches.map(({ _id, ...m }: any) => ({
-            ...m,
-            playerStats: m.playerStats || m.players || []
-        }));
+        // Clean MongoDB _id fields and inspect kill data
+        let totalKillsLogged = 0;
+        const cleanMatches = matches.map(({ _id, ...m }: any) => {
+            const stats = m.playerStats || m.players || [];
+            const matchKills = stats.reduce((acc: number, p: any) => acc + (Number(p.kills) || 0), 0);
+            totalKillsLogged += matchKills;
+            return {
+                ...m,
+                playerStats: stats
+            };
+        });
+
+        console.log(`[GET /api/matches] Successfully parsed ${cleanMatches.length} matches with total ${totalKillsLogged} eliminations.`);
 
         return NextResponse.json(cleanMatches, {
             headers: { 'Cache-Control': 'no-store, max-age=0' }
         });
     } catch (error) {
-        console.error("[GET /api/matches] Error:", error);
+        console.error("[GET /api/matches] Critical error querying matches database:", error);
         return NextResponse.json({ error: 'Database operations failed', details: String(error) }, { status: 500 });
     }
 }
 
 export async function POST(request: NextRequest) {
     try {
+        const auth = await requireAuth(request);
+        if (auth instanceof NextResponse) return auth;
         const { db, isMongo } = await getDb();
         const match = await request.json();
         
@@ -68,6 +71,8 @@ export async function POST(request: NextRequest) {
 
 export async function PUT(request: NextRequest) {
     try {
+        const auth = await requireAuth(request);
+        if (auth instanceof NextResponse) return auth;
         const { db, isMongo } = await getDb();
         const match = await request.json();
 
@@ -89,6 +94,8 @@ export async function PUT(request: NextRequest) {
 
 export async function DELETE(request: NextRequest) {
     try {
+        const auth = await requireAuth(request);
+        if (auth instanceof NextResponse) return auth;
         const { db, isMongo } = await getDb();
         const { searchParams } = new URL(request.url);
         const id = searchParams.get('id');

@@ -60,32 +60,24 @@ const PublicDashboard: React.FC = () => {
   const [selectedMatchStats, setSelectedMatchStats] = useState<Match | null>(null);
   const [selectedHistoryTournament, setSelectedHistoryTournament] = useState<Tournament | null>(null);
   const [currentView, setCurrentView] = useState<'dashboard' | 'tournamentHistory' | 'teams'>(getDashboardView() as any);
-  const [activeCategory, setActiveCategory] = useState<'official' | 'scrim'>(
-    () => (typeof window !== 'undefined' && sessionStorage.getItem('te_category') as 'official' | 'scrim') || 'scrim'
-  );
+  const [activeCategory, setActiveCategory] = useState<'official' | 'scrim'>('official');
+  const userCategoryChoice = useRef<'official' | 'scrim' | null>(null);
   const [weeks, setWeeks] = useState<TournamentWeek[]>([]);
   const [selectedWeekId, setSelectedWeekId] = useState<string>('overall');
-  const [historyPage, setHistoryPage] = useState<number>(1);
-  const [overallStats, setOverallStats] = useState<Record<string, { kills: number; played: number }>>({});
-  const [isFetchingOverallStats, setIsFetchingOverallStats] = useState(false);
 
-  useEffect(() => {
-    if (selectedTournamentId === 'overall') {
-      const fetchOverallStats = async () => {
-        setIsFetchingOverallStats(true);
-        try {
-          const res = await fetch(`/api/players/stats?category=${activeCategory}`);
-          const data = await res.json();
-          setOverallStats(data || {});
-        } catch (e) {
-          console.error("Failed to fetch overall stats", e);
-        } finally {
-          setIsFetchingOverallStats(false);
-        }
-      };
-      fetchOverallStats();
-    }
-  }, [selectedTournamentId, activeCategory]);
+  const pickCurrentScrim = (scrims: Tournament[], allMatches: Match[]) => {
+    const latestByScrim: Record<string, number> = {};
+    allMatches.forEach(m => {
+      const ts = m.timestamp || 0;
+      if (m.tournamentId && ts > (latestByScrim[m.tournamentId] || 0)) {
+        latestByScrim[m.tournamentId] = ts;
+      }
+    });
+    return [...scrims].sort((a, b) =>
+      (latestByScrim[b.id] || 0) - (latestByScrim[a.id] || 0) ||
+      (b.createdAt || 0) - (a.createdAt || 0)
+    )[0];
+  };
 
   useEffect(() => {
     if (!tournaments.length) {
@@ -102,11 +94,12 @@ const PublicDashboard: React.FC = () => {
     const stillValid = inCategory.some(t => t.id === selectedTournamentId);
     if (!stillValid) {
       const activeInCategory = inCategory.find(t => t.active);
-      setSelectedTournamentId((activeInCategory || inCategory[0]).id);
+      const preferred = activeInCategory
+        || (activeCategory === 'scrim' ? pickCurrentScrim(inCategory, matches) : undefined)
+        || inCategory[0];
+      setSelectedTournamentId(preferred.id);
     }
-  }, [tournaments, activeCategory, selectedTournamentId]);
-
-  const hasInitializedCategory = useRef(false);
+  }, [tournaments, activeCategory, selectedTournamentId, matches]);
 
   const refreshData = async () => {
     try {
@@ -117,27 +110,27 @@ const PublicDashboard: React.FC = () => {
       setWeeks(w || []);
       setSettings(st);
 
-      // Auto-set the category on initial load based on active tournaments
-      if (!hasInitializedCategory.current) {
-        hasInitializedCategory.current = true;
-        const savedCategory = typeof window !== 'undefined' ? sessionStorage.getItem('te_category') : null;
-        if (!savedCategory) {
-          const activeTournaments = (t || []).filter(curr => curr.active).sort((a, b) => b.createdAt - a.createdAt);
-          if (activeTournaments.length > 0) {
-            setActiveCategory(activeTournaments[0].category || 'scrim');
-          }
+      // Automatically activate official or scrim category based on active tournament or mode
+      // (only on first load; respect a manual toggle afterwards)
+      const activeT = (t || []).find(curr => curr.active);
+      if (activeT) {
+        if (activeT.category && !userCategoryChoice.current) {
+          setActiveCategory(activeT.category);
         }
-      }
-
-      // Only set initial tournament on first load (never override user's manual selection)
-      if (!selectedTournamentId) {
-        const activeT = (t || []).find(curr => curr.active);
-        if (activeT) setSelectedTournamentId(activeT.id);
+        if (!selectedTournamentId) {
+          setSelectedTournamentId(activeT.id);
+        }
+      } else if (getDashboardView() === 'dashboard' && !userCategoryChoice.current) {
+        if (st?.mode === 'official') {
+          setActiveCategory('official');
+        } else if (st?.mode === 'normal') {
+          setActiveCategory('scrim');
+        }
       }
 
       setCurrentView(getDashboardView() as any);
     } catch (err) {
-      console.error('Fetch error:', err);
+      console.error("Fetch error:", err);
     } finally {
       setIsLoading(false);
     }
@@ -153,16 +146,14 @@ const PublicDashboard: React.FC = () => {
     };
   }, []);
 
-  const categoryTournaments = tournaments
-    .filter(t => (t.category || 'scrim') === activeCategory)
-    .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+  const categoryTournaments = tournaments.filter(t => (t.category || 'scrim') === activeCategory);
   const rosterPlayers = players.length > 0 ? players : INITIAL_PLAYERS;
-  const displayTournament = selectedTournamentId === 'overall' 
-    ? { id: 'overall', name: 'OVERALL LIFETIME STATS', category: activeCategory, active: false, createdAt: 0 } as Tournament
-    : (selectedTournamentId ? categoryTournaments.find(t => t.id === selectedTournamentId) : null)
-      || categoryTournaments[0]
-      || tournaments.find(t => t.id === selectedTournamentId)
-      || tournaments[0];
+  const displayTournament = (selectedTournamentId ? categoryTournaments.find(t => t.id === selectedTournamentId) : null)
+    || categoryTournaments.find(t => t.active)
+    || (activeCategory === 'scrim' ? pickCurrentScrim(categoryTournaments, matches) : categoryTournaments[0])
+    || tournaments.find(t => t.id === selectedTournamentId)
+    || tournaments.find(t => t.active)
+    || tournaments[0];
 
   const tournamentWeeks = weeks
     .filter(w => w.tournamentId === displayTournament?.id)
@@ -186,7 +177,7 @@ const PublicDashboard: React.FC = () => {
   const isOfficialTournament = (displayTournament?.category || activeCategory) === 'official';
 
   const tournamentMatches = matches
-    .filter(m => m.tournamentId === displayTournament?.id || (!m.tournamentId && !!displayTournament))
+    .filter(m => m.tournamentId === displayTournament?.id)
     .filter(m => isOfficialTournament && selectedWeekId !== 'overall' ? m.weekId === selectedWeekId : true)
     .sort((a, b) => b.matchNumber - a.matchNumber);
 
@@ -195,87 +186,87 @@ const PublicDashboard: React.FC = () => {
   const lastMatchKills = (lastMatch?.playerStats || (lastMatch as any)?.players || []).reduce((acc: number, p: any) => acc + (p.kills || 0), 0) || 0;
   const lastMatchPlacementPts = lastMatch ? (POSITION_POINTS[lastMatch.position] || 0) : 0;
 
-  // Dynamically combine rosterPlayers with any substitutes found in the match data
-  const activePlayers = [...rosterPlayers];
-  tournamentMatches.forEach(m => {
-    (m.playerStats || (m as any).players || []).forEach((ps: any) => {
-      const raw = (ps.playerId || ps.id || ps.name || '').toString().trim();
-      if (!raw) return;
-      const lowerRaw = raw.toLowerCase();
-      if (!activePlayers.some(p => 
-        p.id.toLowerCase() === lowerRaw || 
-        p.name.toLowerCase() === lowerRaw ||
-        p.name.replace(/^TE\.\s*/i, '').trim().toLowerCase() === lowerRaw.replace(/^TE\.\s*/i, '').trim()
-      )) {
-        activePlayers.push({
-          id: raw,
-          name: raw.toUpperCase(),
-          role: 'SUBSTITUTE',
-          imageUrl: ''
-        });
-      }
-    });
-  });
-
-  // Shared helper — resolves any player stat entry to a roster or substitute player
-  const resolvePlayer = (ps: any) =>
-    activePlayers.find(p => {
-      const raw = (ps.playerId || ps.id || ps.name || '').toString().trim().toLowerCase();
-      return (
-        p.id.toLowerCase() === raw ||
-        p.name.toLowerCase() === raw ||
-        p.name.replace(/^TE\.\s*/i, '').trim().toLowerCase() === raw.replace(/^TE\.\s*/i, '').trim()
-      );
-    });
-
-  // Points + kills totals for a given tournament (used by stat cards & history cards)
   const calculateTournamentStats = (tId: string) => {
-    const isOff = (tournaments.find(t => t.id === tId)?.category || activeCategory) === 'official';
-    const relevant = matches
-      .filter(m => m.tournamentId === tId || (!m.tournamentId && !!tId))
+    const tCategory = tournaments.find(t => t.id === tId)?.category || activeCategory;
+    const isOff = tCategory === 'official';
+    const relevantMatches = matches
+      .filter(m => m.tournamentId === tId)
       .filter(m => isOff && selectedWeekId !== 'overall' ? m.weekId === selectedWeekId : true);
 
-    const playerTotals: Record<string, number> = Object.fromEntries(activePlayers.map(p => [p.id, 0]));
-    relevant.forEach(m =>
-      (m.playerStats || (m as any).players || []).forEach((ps: any) => {
-        const player = resolvePlayer(ps);
-        if (player) playerTotals[player.id] = (playerTotals[player.id] || 0) + (Number(ps.kills) || 0);
-      })
-    );
+    const playerTotals: { [key: string]: number } = {};
+    rosterPlayers.forEach(p => playerTotals[p.id] = 0);
 
-    return {
-      playerTotals,
-      totalPoints: relevant.reduce((sum, m) => sum + (m.totalPoints || 0), 0),
-      count: relevant.length,
-    };
+    relevantMatches.forEach(m => {
+      const stats = m.playerStats || (m as any).players || [];
+      stats.forEach((ps: any) => {
+        const rawId = (ps.playerId || ps.id || ps.name || '').toString().trim();
+        const pObj = rosterPlayers.find(p =>
+          p.id.toLowerCase() === rawId.toLowerCase() ||
+          p.name.toLowerCase() === rawId.toLowerCase() ||
+          p.name.toUpperCase().replace(/^TE\.\s*/i, '').trim() === rawId.toUpperCase().replace(/^TE\.\s*/i, '').trim()
+        );
+        const pid = pObj ? pObj.id : rawId;
+        if (pid) {
+          playerTotals[pid] = (playerTotals[pid] || 0) + (Number(ps.kills) || 0);
+          if (pObj && pid !== pObj.id) {
+            playerTotals[pObj.id] = (playerTotals[pObj.id] || 0) + (Number(ps.kills) || 0);
+          }
+        }
+      });
+    });
+
+    const totalPoints = relevantMatches.reduce((acc, m) => acc + (m.totalPoints || 0), 0);
+    return { playerTotals, totalPoints, count: relevantMatches.length };
   };
 
-  // Per-player kills & matches played — scoped to current tournament & week
-  const calcPlayerStats = () => {
-    const stats: Record<string, { kills: number; played: number }> = Object.fromEntries(
-      activePlayers.map(p => [p.id, { kills: 0, played: 0 }])
-    );
-    tournamentMatches.forEach(m =>
-      (m.playerStats || (m as any).players || []).forEach((ps: any) => {
-        const player = resolvePlayer(ps);
-        if (player) {
-          stats[player.id].kills += Number(ps.kills) || 0;
-          stats[player.id].played += 1;
-        }
+  const calculateOverallPlayerStats = () => {
+    const playerStats: { [key: string]: { kills: number, played: number } } = {};
+    rosterPlayers.forEach(p => playerStats[p.id] = { kills: 0, played: 0 });
+
+    const filteredMatches = matches
+      .filter(m => {
+        if (displayTournament && m.tournamentId === displayTournament.id) return true;
+        const t = tournaments.find(tour => tour.id === m.tournamentId);
+        return (t?.category || 'scrim') === activeCategory;
       })
-    );
-    return stats;
+      .filter(m => activeCategory === 'official' && selectedWeekId !== 'overall' ? m.weekId === selectedWeekId : true);
+
+    filteredMatches.forEach(m => {
+      const stats = m.playerStats || (m as any).players || [];
+      stats.forEach((ps: any) => {
+        const rawId = (ps.playerId || ps.id || ps.name || '').toString().trim();
+        const pObj = rosterPlayers.find(p =>
+          p.id.toLowerCase() === rawId.toLowerCase() ||
+          p.name.toLowerCase() === rawId.toLowerCase() ||
+          p.name.toUpperCase().replace(/^TE\.\s*/i, '').trim() === rawId.toUpperCase().replace(/^TE\.\s*/i, '').trim()
+        );
+        const pid = pObj ? pObj.id : rawId;
+        if (pid) {
+          if (!playerStats[pid]) {
+            playerStats[pid] = { kills: 0, played: 0 };
+          }
+          playerStats[pid].kills += Number(ps.kills) || 0;
+          playerStats[pid].played += 1;
+          if (pObj && pid !== pObj.id) {
+            if (!playerStats[pObj.id]) playerStats[pObj.id] = { kills: 0, played: 0 };
+            playerStats[pObj.id].kills += Number(ps.kills) || 0;
+            playerStats[pObj.id].played += 1;
+          }
+        }
+      });
+    });
+
+    return playerStats;
   };
 
   const currentStats = calculateTournamentStats(displayTournament?.id || '');
-  const playerStats = calcPlayerStats();
-
+  const overallPlayerStats = calculateOverallPlayerStats();
   const animatedTotalPoints = useCountUp(currentStats.totalPoints);
 
   const handleCopySummary = () => {
     if (!lastMatch || !displayTournament) return;
     const killSummary = (lastMatch.playerStats || (lastMatch as any).players || []).map((ps: any) => {
-      const p = activePlayers.find(i => i.id === ps.playerId || i.id.toLowerCase() === (ps.playerId || '').toLowerCase());
+      const p = rosterPlayers.find(i => i.id === ps.playerId || i.id.toLowerCase() === (ps.playerId || '').toLowerCase());
       return `${p?.name || ps.playerId}: ${ps.kills || 0}`;
     }).join('\n');
     const posPts = POSITION_POINTS[lastMatch.position] || 0;
@@ -314,98 +305,73 @@ const PublicDashboard: React.FC = () => {
   const renderDashboard = () => (
     <div className="space-y-8 animate-slide-up">
       {/* 01. Live Standings Header */}
-      <div className="flex flex-col gap-4 border-b border-zinc-800/50 pb-6">
-        {/* Title row */}
-        <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
-          <div className="space-y-2 min-w-0">
-            <div className="flex items-center gap-2 flex-wrap">
-              {displayTournament?.category === 'official' ? (
-                <div className="flex items-center gap-1.5 px-2.5 py-1 bg-purple-500/10 border border-purple-500/20 rounded-full">
-                  <span className="w-1.5 h-1.5 bg-purple-500 rounded-full animate-pulse shrink-0" />
-                  <span className="text-[7px] font-black tracking-widest text-purple-400 uppercase">OFFICIAL</span>
-                </div>
-              ) : (
-                <div className="flex items-center gap-1.5 px-2.5 py-1 bg-blue-500/10 border border-blue-500/20 rounded-full">
-                  <span className="w-1.5 h-1.5 bg-blue-500 rounded-full animate-pulse shrink-0" />
-                  <span className="text-[7px] font-black tracking-widest text-blue-400 uppercase">SCRIM</span>
-                </div>
-              )}
-              {displayTournament?.active ? (
-                <div className="flex items-center gap-1.5 px-2.5 py-1 bg-green-500/10 border border-green-500/20 rounded-full">
-                  <span className="w-1.5 h-1.5 bg-green-500 rounded-full animate-pulse shrink-0" />
-                  <span className="text-[7px] font-black tracking-widest text-green-400 uppercase">LIVE</span>
-                </div>
-              ) : (
-                <div className="flex items-center gap-1.5 px-2.5 py-1 bg-zinc-500/10 border border-zinc-500/20 rounded-full">
-                  <span className="text-[7px] font-black tracking-widest text-zinc-400 uppercase">ARCHIVED</span>
-                </div>
-              )}
-            </div>
-            <h2 className="text-xl sm:text-3xl font-blanka text-white uppercase tracking-tight leading-tight break-words">
+      <div className="flex flex-col flex-wrap sm:flex-row justify-between items-start sm:items-end gap-4 border-b border-zinc-800/50 pb-6">
+        <div className="space-y-2">
+          <div className="flex items-center gap-2.5 flex-wrap">
+            {displayTournament?.category === 'official' ? (
+              <div className="flex items-center gap-2 px-3 py-1 bg-purple-500/10 border border-purple-500/20 rounded-full">
+                <span className="w-1.5 h-1.5 bg-purple-500 rounded-full animate-pulse" />
+                <span className="text-[8px] font-black tracking-widest text-purple-400 uppercase">OFFICIAL TOURNAMENT</span>
+              </div>
+            ) : (
+              <div className="flex items-center gap-2 px-3 py-1 bg-blue-500/10 border border-blue-500/20 rounded-full">
+                <span className="w-1.5 h-1.5 bg-blue-500 rounded-full animate-pulse" />
+                <span className="text-[8px] font-black tracking-widest text-blue-400 uppercase">SCRIM TOURNAMENT</span>
+              </div>
+            )}
+            {displayTournament?.active ? (
+              <div className="flex items-center gap-2 px-3 py-1 bg-green-500/10 border border-green-500/20 rounded-full">
+                <span className="w-1.5 h-1.5 bg-green-500 rounded-full animate-pulse" />
+                <span className="text-[8px] font-black tracking-widest text-green-400 uppercase">ONGOING</span>
+              </div>
+            ) : (
+              <div className="flex items-center gap-2 px-3 py-1 bg-zinc-500/10 border border-zinc-500/20 rounded-full">
+                <span className="text-[8px] font-black tracking-widest text-zinc-400 uppercase">ARCHIVED</span>
+              </div>
+            )}
+            <h2 className="text-2xl sm:text-3xl font-blanka text-white uppercase tracking-tight">
               {displayTournament?.name || 'NO ACTIVE HUB'}
             </h2>
-            <p className="text-zinc-500 font-bold text-[8px] sm:text-[9px] uppercase tracking-[0.2em] sm:tracking-[0.3em]">
-              LIVE STANDINGS {selectedWeekId !== 'overall' ? `• ${weeks.find(w => w.id === selectedWeekId)?.name.toUpperCase()}` : '• OVERALL'} • {tournamentMatches.length} MATCHES
-            </p>
           </div>
-          {/* Category Switcher */}
-          <div className="flex items-center gap-1.5 bg-zinc-900/90 p-1.5 rounded-2xl border border-zinc-800 self-start shrink-0">
-            <button
-              onClick={() => {
-                setActiveCategory('scrim');
-                if (typeof window !== 'undefined') sessionStorage.setItem('te_category', 'scrim');
-                const firstScrim = tournaments.find(t => (t.category || 'scrim') === 'scrim' && t.active) || tournaments.find(t => (t.category || 'scrim') === 'scrim');
-                if (firstScrim) setSelectedTournamentId(firstScrim.id);
-              }}
-              className={`px-3 py-1.5 rounded-xl text-[8px] sm:text-[9px] font-blanka tracking-widest uppercase transition-all cursor-pointer ${
-                activeCategory === 'scrim'
-                  ? 'bg-blue-600 text-white shadow-md shadow-blue-600/20'
-                  : 'text-zinc-400 hover:text-white hover:bg-zinc-800/50'
-              }`}
-            >
-              SCRIMS
-            </button>
-            <button
-              onClick={() => {
-                setActiveCategory('official');
-                if (typeof window !== 'undefined') sessionStorage.setItem('te_category', 'official');
-                const firstOfficial = tournaments.find(t => t.category === 'official' && t.active) || tournaments.find(t => t.category === 'official');
-                if (firstOfficial) setSelectedTournamentId(firstOfficial.id);
-              }}
-              className={`px-3 py-1.5 rounded-xl text-[8px] sm:text-[9px] font-blanka tracking-widest uppercase transition-all cursor-pointer ${
-                activeCategory === 'official'
-                  ? 'bg-purple-600 text-white shadow-md shadow-purple-600/20'
-                  : 'text-zinc-400 hover:text-white hover:bg-zinc-800/50'
-              }`}
-            >
-              OFFICIAL
-            </button>
-          </div>
+          <p className="text-zinc-500 font-bold text-[9px] uppercase tracking-[0.3em]">
+            LIVE STANDINGS {selectedWeekId !== 'overall' ? `• ${weeks.find(w => w.id === selectedWeekId)?.name.toUpperCase()}` : '• OVERALL'} • {tournamentMatches.length} MATCHES COMPLETED
+          </p>
         </div>
-        {/* Tournament Dropdown full-width on mobile */}
-        {categoryTournaments.length > 0 && (
-          <div className="flex flex-col sm:flex-row items-start sm:items-center gap-2">
-            <span className="text-[8px] font-black text-zinc-600 uppercase tracking-widest whitespace-nowrap shrink-0">Switch Tournament:</span>
-            <select
-              value={selectedTournamentId}
-              onChange={(e) => setSelectedTournamentId(e.target.value)}
-              className="w-full sm:flex-1 sm:max-w-sm bg-zinc-900/80 border border-zinc-800 text-zinc-300 text-[10px] font-bold rounded-xl px-3 py-2 cursor-pointer hover:border-zinc-700 transition-all focus:outline-none focus:border-blue-500/50"
-            >
-              <option value="overall">OVERALL LIFETIME STATS</option>
-              {categoryTournaments
-                .slice()
-                .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0))
-                .map(t => {
-                  const count = matches.filter(m => m.tournamentId === t.id).length;
-                  return (
-                    <option key={t.id} value={t.id}>
-                      {t.active ? '🟢 ' : ''}{t.name} ({count}M)
-                    </option>
-                  );
-                })}
-            </select>
-          </div>
-        )}
+
+        {/* Category Switcher Tabs */}
+        <div className="flex items-center gap-1.5 bg-zinc-900/90 p-1.5 rounded-2xl border border-zinc-800">
+          <button
+            onClick={() => {
+              userCategoryChoice.current = 'scrim';
+              setActiveCategory('scrim');
+              const scrims = tournaments.filter(t => (t.category || 'scrim') === 'scrim');
+              const currentScrim = scrims.find(t => t.active) || pickCurrentScrim(scrims, matches);
+              if (currentScrim) setSelectedTournamentId(currentScrim.id);
+            }}
+            className={`px-3.5 py-1.5 rounded-xl text-[9px] font-blanka tracking-widest uppercase transition-all cursor-pointer ${
+              activeCategory === 'scrim'
+                ? 'bg-blue-600 text-white shadow-md shadow-blue-600/20'
+                : 'text-zinc-400 hover:text-white hover:bg-zinc-800/50'
+            }`}
+          >
+            SCRIMS
+          </button>
+          <button
+            onClick={() => {
+              userCategoryChoice.current = 'official';
+              setActiveCategory('official');
+              const firstOfficial = tournaments.find(t => t.category === 'official' && t.active) || tournaments.find(t => t.category === 'official');
+              if (firstOfficial) setSelectedTournamentId(firstOfficial.id);
+            }}
+            className={`px-3.5 py-1.5 rounded-xl text-[9px] font-blanka tracking-widest uppercase transition-all cursor-pointer ${
+              activeCategory === 'official'
+                ? 'bg-purple-600 text-white shadow-md shadow-purple-600/20'
+                : 'text-zinc-400 hover:text-white hover:bg-zinc-800/50'
+            }`}
+          >
+            OFFICIAL
+          </button>
+        </div>
       </div>
 
       {/* WEEK SELECTOR BAR */}
@@ -451,47 +417,48 @@ const PublicDashboard: React.FC = () => {
         </div>
       )}
 
+      {/* 02. Stats Grid (4 Cards) */}
       <div className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4 md:gap-6">
-        <div className="glass-card p-4 sm:p-5 md:p-6 rounded-2xl sm:rounded-2xl md:rounded-3xl border-zinc-800/50 relative group hover:border-blue-500/30 transition-all">
-          <div className="absolute top-2 right-3 text-zinc-800 group-hover:text-blue-500/10 transition-colors">
+        <div className="glass-card p-4 sm:p-5 md:p-6 rounded-2xl sm:rounded-2xl md:rounded-3xl border-zinc-800/50 relative overflow-hidden group hover:border-blue-500/30 transition-all">
+          <div className="absolute top-2 right-4 text-zinc-800 group-hover:text-blue-500/10 transition-colors">
             <svg className="w-6 sm:w-7 md:w-8 h-6 sm:h-7 md:h-8" fill="currentColor" viewBox="0 0 24 24"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" /></svg>
           </div>
           <p className="text-[8px] sm:text-[8px] md:text-[9px] font-bold text-zinc-500 uppercase tracking-widest mb-2 sm:mb-3">Total Points</p>
-          <div className="flex items-end gap-1.5 sm:gap-3">
-            <p className="text-3xl sm:text-4xl md:text-5xl font-blanka text-neon-green leading-none">{animatedTotalPoints}</p>
+          <div className="flex items-end gap-2 sm:gap-3">
+            <p className="text-4xl sm:text-4xl md:text-5xl font-blanka text-gradient leading-none">{animatedTotalPoints}</p>
             {lastMatchTotalPoints > 0 && (
               <span className="text-blue-400 font-bold text-[8px] sm:text-[9px] md:text-[10px] mb-1 flex items-center gap-0.5" title="Points from last match">
-                <svg className="w-2 h-2" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 15l7-7 7 7" /></svg>
+                <svg className="w-2 h-2 sm:w-2 md:w-2.5 sm:h-2 md:h-2.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 15l7-7 7 7" /></svg>
                 {lastMatchTotalPoints}
               </span>
             )}
           </div>
-          <div className="mt-3 sm:mt-4 h-0.5 sm:h-1 w-full bg-zinc-800 rounded-full overflow-hidden">
+          <div className="mt-4 h-0.5 sm:h-1 w-full bg-zinc-800 rounded-full overflow-hidden">
             <div className="h-full bg-blue-500 rounded-full transition-all duration-1000" style={{ width: '65%' }} />
           </div>
         </div>
 
-        <div className="glass-card p-4 sm:p-5 md:p-6 rounded-2xl sm:rounded-2xl md:rounded-3xl border-zinc-800/50 relative group hover:border-yellow-500/30 transition-all">
-          <div className="absolute top-2 right-3 text-zinc-800 group-hover:text-yellow-500/10 transition-colors">
+        <div className="glass-card p-4 sm:p-5 md:p-6 rounded-2xl sm:rounded-2xl md:rounded-3xl border-zinc-800/50 relative overflow-hidden group hover:border-yellow-500/30 transition-all">
+          <div className="absolute top-2 right-4 text-zinc-800 group-hover:text-yellow-500/10 transition-colors">
             <svg className="w-6 sm:w-7 md:w-8 h-6 sm:h-7 md:h-8" fill="currentColor" viewBox="0 0 24 24"><path d="M19 5h-2V3H7v2H5c-1.1 0-2 .9-2 2v1c0 2.55 1.92 4.63 4.39 4.94A5.01 5.01 0 0011 15.9V19H7v2h10v-2h-4v-3.1a5.01 5.01 0 003.61-2.96C20.08 10.63 22 8.55 22 6V5c0-1.1-.9-2-2-2zM5 7h2v2H5V7zm14 2h-2V7h2v2z" /></svg>
           </div>
-          <p className="text-[8px] sm:text-[8px] md:text-[9px] font-bold text-zinc-500 uppercase tracking-widest mb-2 sm:mb-3">Current Rank</p>
-          <p className="text-3xl sm:text-4xl md:text-5xl font-blanka text-white leading-none">#{displayTournament?.currentRank || 1}</p>
-          <p className="mt-2 sm:mt-3 text-[7px] sm:text-[8px] md:text-[9px] text-zinc-600 font-bold uppercase leading-tight">{displayTournament?.rankDescription || 'Leading by 12 pts'}</p>
+          <p className="text-[8px] sm:text-[8px] md:text-[9px] font-bold text-zinc-500 uppercase tracking-widest mb-2 sm:mb-3\">Current Rank</p>
+          <p className="text-4xl sm:text-4xl md:text-5xl font-blanka text-white leading-none\">#{displayTournament?.currentRank || 1}</p>
+          <p className="mt-2 sm:mt-3 text-[8px] sm:text-[8px] md:text-[9px] text-zinc-600 font-bold uppercase\">{displayTournament?.rankDescription || 'Leading by 12 pts'}</p>
         </div>
 
-        <div className="glass-card p-4 sm:p-5 md:p-6 rounded-2xl sm:rounded-2xl md:rounded-3xl border-zinc-800/50 relative group hover:border-red-500/30 transition-all">
-          <div className="absolute top-2 right-3 text-zinc-800 group-hover:text-red-500/10 transition-colors">
+        <div className="glass-card p-4 sm:p-5 md:p-6 rounded-2xl sm:rounded-2xl md:rounded-3xl border-zinc-800/50 relative overflow-hidden group hover:border-red-500/30 transition-all">
+          <div className="absolute top-2 right-4 text-zinc-800 group-hover:text-red-500/10 transition-colors">
             <svg className="w-6 sm:w-7 md:w-8 h-6 sm:h-7 md:h-8" fill="currentColor" viewBox="0 0 24 24"><path d="M12 2C6.47 2 2 6.47 2 12s4.47 10 10 10 10-4.47 10-10S17.53 2 12 2zm5 13.59L15.59 17 12 13.41 8.41 17 7 15.59 10.59 12 7 8.41 8.41 7 12 10.59 15.59 7 17 8.41 13.41 12 17 15.59z" /></svg>
           </div>
           <p className="text-[8px] sm:text-[8px] md:text-[9px] font-bold text-zinc-500 uppercase tracking-widest mb-2 sm:mb-3">Eliminations</p>
-          <div className="flex items-end gap-1.5 sm:gap-3">
-            <p className="text-3xl sm:text-4xl md:text-5xl font-blanka text-white leading-none">
+          <div className="flex items-end gap-2 sm:gap-3">
+            <p className="text-4xl sm:text-4xl md:text-5xl font-blanka text-white leading-none">
               {tournamentMatches.reduce((acc, m) => acc + (m.playerStats || (m as any).players || []).reduce((a: number, b: any) => a + (b.kills || 0), 0), 0)}
             </p>
             {lastMatchKills > 0 && (
               <span className="text-green-400 font-bold text-[8px] sm:text-[9px] md:text-[10px] mb-1 flex items-center gap-0.5" title="Kills from last match">
-                <svg className="w-2 h-2" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 15l7-7 7 7" /></svg>
+                <svg className="w-2 h-2 sm:w-2 md:w-2.5 sm:h-2 md:h-2.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 15l7-7 7 7" /></svg>
                 {lastMatchKills}
               </span>
             )}
@@ -499,21 +466,21 @@ const PublicDashboard: React.FC = () => {
           <p className="mt-2 sm:mt-3 text-[8px] sm:text-[8px] md:text-[9px] text-zinc-600 font-bold uppercase">KILLS</p>
         </div>
 
-        <div className="glass-card p-4 sm:p-5 md:p-6 rounded-2xl sm:rounded-2xl md:rounded-3xl border-zinc-800/50 relative group hover:border-green-500/30 transition-all">
-          <div className="absolute top-2 right-3 text-zinc-800 group-hover:text-green-500/10 transition-colors">
+        <div className="glass-card p-4 sm:p-5 md:p-6 rounded-2xl sm:rounded-2xl md:rounded-3xl border-zinc-800/50 relative overflow-hidden group hover:border-green-500/30 transition-all">
+          <div className="absolute top-2 right-4 text-zinc-800 group-hover:text-green-500/10 transition-colors">
             <svg className="w-6 sm:w-7 md:w-8 h-6 sm:h-7 md:h-8" fill="currentColor" viewBox="0 0 24 24"><path d="M14.4 6L14 4H5v17h2v-7h5.6l.4 2h7V6h-5.6z" /></svg>
           </div>
           <p className="text-[8px] sm:text-[8px] md:text-[9px] font-bold text-zinc-500 uppercase tracking-widest mb-2 sm:mb-3">Placement Pts</p>
-          <div className="flex items-end gap-1.5 sm:gap-3">
-            <p className="text-3xl sm:text-4xl md:text-5xl font-blanka text-neon-green leading-none">{tournamentMatches.reduce((acc, m) => acc + (POSITION_POINTS[m.position] || 0), 0)}</p>
+          <div className="flex items-end gap-2 sm:gap-3">
+            <p className="text-4xl sm:text-4xl md:text-5xl font-blanka text-white leading-none">{tournamentMatches.reduce((acc, m) => acc + (POSITION_POINTS[m.position] || 0), 0)}</p>
             {lastMatchPlacementPts > 0 && (
               <span className="text-blue-400 font-bold text-[8px] sm:text-[9px] md:text-[10px] mb-1 flex items-center gap-0.5" title="Placement pts from last match">
-                <svg className="w-2 h-2" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 15l7-7 7 7" /></svg>
+                <svg className="w-2 h-2 sm:w-2 md:w-2.5 sm:h-2 md:h-2.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 15l7-7 7 7" /></svg>
                 {lastMatchPlacementPts}
               </span>
             )}
           </div>
-          <p className="mt-2 sm:mt-3 text-[8px] sm:text-[9px] text-zinc-600 font-bold uppercase">Survival pts</p>
+          <p className="mt-3 text-[9px] text-zinc-600 font-bold uppercase">Consistent survival</p>
         </div>
       </div>
 
@@ -535,47 +502,7 @@ const PublicDashboard: React.FC = () => {
           </div>
           {tournamentMatches.length > 0 ? (
             <div className="glass-card rounded-3xl overflow-hidden border-zinc-800/50">
-              {/* Mobile: card list */}
-              <div className="block sm:hidden divide-y divide-zinc-900/50">
-                {tournamentMatches.slice(0, 5).map((m, i) => {
-                  const kills = (m.playerStats || (m as any).players || []).reduce((a: number, b: any) => a + (b.kills || 0), 0);
-                  return (
-                    <div key={`${m.id}-${i}`} className="p-4 hover:bg-zinc-900/30 transition-colors">
-                      <div className="flex items-center justify-between mb-3">
-                        <div>
-                          <span className="font-blanka text-sm text-white">Match {m.matchNumber}</span>
-                          {m.weekId && (
-                            <span className="ml-2 px-1.5 py-0.5 bg-blue-900/40 text-blue-400 rounded text-[7px] font-black uppercase tracking-widest">
-                              {weeks.find(w => w.id === m.weekId)?.name || 'Phase'}
-                            </span>
-                          )}
-                        </div>
-                        <span className={`font-blanka text-base ${m.position === 1 ? 'text-neon-green' : 'text-white'}`}>#{m.position}</span>
-                      </div>
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-4">
-                          <div className="text-center">
-                            <p className="text-[8px] font-black text-zinc-600 uppercase tracking-widest">Kills</p>
-                            <p className="font-bold text-sm text-zinc-300">{kills}</p>
-                          </div>
-                          <div className="text-center">
-                            <p className="text-[8px] font-black text-zinc-600 uppercase tracking-widest">Points</p>
-                            <p className="font-blanka text-sm text-neon-green">{m.totalPoints}</p>
-                          </div>
-                        </div>
-                        <button
-                          onClick={() => setSelectedMatchStats(m)}
-                          className="px-3 py-1.5 bg-zinc-800 hover:bg-blue-600 text-white text-[8px] font-black rounded-lg transition-all"
-                        >
-                          STATS
-                        </button>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-              {/* Desktop: table */}
-              <div className="hidden sm:block w-full overflow-x-auto">
+              <div className="w-full overflow-x-auto">
                 <table className="w-full text-left whitespace-nowrap">
                   <thead className="bg-zinc-900/50 text-[8px] font-black uppercase tracking-[0.2em] text-zinc-600 border-b border-zinc-900">
                     <tr>
@@ -588,12 +515,12 @@ const PublicDashboard: React.FC = () => {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-zinc-900/50">
-                    {tournamentMatches.slice(0, 5).map((m, i) => (
-                      <tr key={`${m.id}-${i}`} className="hover:bg-zinc-900/30 transition-colors group">
+                    {tournamentMatches.slice(0, 5).map((m) => (
+                      <tr key={m.id} className="hover:bg-zinc-900/30 transition-colors group">
                         <td className="px-6 py-5">
                           <span className="font-bold text-xs text-white">Match {m.matchNumber}</span>
                           {m.weekId && (
-                            <span className="ml-2 px-2 py-0.5 bg-blue-900/40 text-blue-400 rounded text-[8px] font-black uppercase tracking-widest">
+                            <span className="ml-2 px-2 py-0.5 bg-blue-900/40 text-blue-400 rounded text-[8px] font-black uppercase tracking-widest hidden sm:inline-block">
                               {weeks.find(w => w.id === m.weekId)?.name || 'Unknown Phase'}
                             </span>
                           )}
@@ -621,7 +548,7 @@ const PublicDashboard: React.FC = () => {
               </div>
             </div>
           ) : (
-            <RadarEmptyState message={selectedTournamentId === 'overall' ? "Match history is hidden in Overall view" : "No history found"} />
+            <RadarEmptyState message="No history found" />
           )}
         </div>
 
@@ -637,10 +564,6 @@ const PublicDashboard: React.FC = () => {
 
           <div className="glass-card rounded-3xl p-6 border-zinc-800/50 space-y-4 shadow-[0_20px_50px_rgba(0,0,0,0.5)]">
             {rosterPlayers.map(p => {
-              if (selectedTournamentId === 'overall') {
-                const os = overallStats[p.id.toLowerCase()] || overallStats[p.name.toLowerCase()] || { kills: 0, played: 0 };
-                return { ...p, kills: os.kills, played: os.played };
-              }
               const played = tournamentMatches.filter(m => (m.playerStats || (m as any).players || []).some((ps: any) =>
                 ps.playerId === p.id ||
                 ps.playerId?.toLowerCase() === p.id.toLowerCase() ||
@@ -696,54 +619,48 @@ const PublicDashboard: React.FC = () => {
     </div >
   );
 
-  const renderTournamentHistory = () => {
-    const sortedHistory = categoryTournaments.sort((a, b) => b.createdAt - a.createdAt);
-    const totalPages = Math.ceil(sortedHistory.length / 5);
-    const paginatedHistory = sortedHistory.slice((historyPage - 1) * 5, historyPage * 5);
-
-    return (
-      <div className="space-y-8 animate-slide-up">
-        {/* Category Toggle */}
-        <div className="flex items-center justify-center mb-6">
-          <div className="flex w-full sm:w-auto items-center p-1 bg-zinc-900/80 border border-zinc-800 rounded-2xl">
-            <button
-              onClick={() => {
-                setActiveCategory('official');
-                setSelectedWeekId('overall');
-                setHistoryPage(1);
-              }}
-              className={`flex-1 sm:flex-none px-5 sm:px-8 py-2.5 sm:py-3 rounded-xl font-blanka text-xs sm:text-sm tracking-widest transition-all ${activeCategory === 'official'
-                ? 'bg-blue-600 text-white shadow-[0_0_20px_rgba(37,99,235,0.4)]'
-                : 'text-zinc-500 hover:text-white hover:bg-zinc-800/50'
-                }`}
-            >
-              OFFICIALS
-            </button>
-            <button
-              onClick={() => {
-                setActiveCategory('scrim');
-                setSelectedWeekId('overall');
-                setHistoryPage(1);
-              }}
-              className={`flex-1 sm:flex-none px-5 sm:px-8 py-2.5 sm:py-3 rounded-xl font-blanka text-xs sm:text-sm tracking-widest transition-all ${activeCategory === 'scrim'
-                ? 'bg-blue-600 text-white shadow-[0_0_20px_rgba(37,99,235,0.4)]'
-                : 'text-zinc-500 hover:text-white hover:bg-zinc-800/50'
-                }`}
-            >
-              SCRIMS
-            </button>
-          </div>
+  const renderTournamentHistory = () => (
+    <div className="space-y-10 animate-slide-up">
+      {/* Category Toggle - Only shown in History as per user request */}
+      <div className="flex items-center justify-center mb-8">
+        <div className="inline-flex items-center p-1 bg-zinc-900/80 border border-zinc-800 rounded-2xl">
+          <button
+            onClick={() => {
+              userCategoryChoice.current = 'official';
+              setActiveCategory('official');
+              setSelectedWeekId('overall');
+            }}
+            className={`px-8 py-3 rounded-xl font-blanka text-sm tracking-widest transition-all ${activeCategory === 'official'
+              ? 'bg-blue-600 text-white shadow-[0_0_20px_rgba(37,99,235,0.4)]'
+              : 'text-zinc-500 hover:text-white hover:bg-zinc-800/50'
+              }`}
+          >
+            OFFICIALS
+          </button>
+          <button
+            onClick={() => {
+              userCategoryChoice.current = 'scrim';
+              setActiveCategory('scrim');
+              setSelectedWeekId('overall');
+            }}
+            className={`px-8 py-3 rounded-xl font-blanka text-sm tracking-widest transition-all ${activeCategory === 'scrim'
+              ? 'bg-blue-600 text-white shadow-[0_0_20px_rgba(37,99,235,0.4)]'
+              : 'text-zinc-500 hover:text-white hover:bg-zinc-800/50'
+              }`}
+          >
+            SCRIMS / UNOFFICIAL
+          </button>
         </div>
+      </div>
 
-        <h3 className="font-blanka text-xl text-white flex items-center gap-3">
-          <span className="w-6 h-1 bg-zinc-700 rounded-full" />
-          Tournament History
-          <span className="text-[9px] font-bold text-zinc-600 bg-zinc-800/50 px-2 py-0.5 rounded-full ml-2">{categoryTournaments.length}</span>
-        </h3>
-        {categoryTournaments.length > 0 ? (
-          <>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              {paginatedHistory.map((t, idx) => {
+      <h3 className="font-blanka text-xl text-white flex items-center gap-3">
+        <span className="w-6 h-1 bg-zinc-700 rounded-full" />
+        Tournament History
+        <span className="text-[9px] font-bold text-zinc-600 bg-zinc-800/50 px-2 py-0.5 rounded-full ml-2">{tournaments.length}</span>
+      </h3>
+      {categoryTournaments.length > 0 ? (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          {categoryTournaments.sort((a, b) => b.createdAt - a.createdAt).map((t, idx) => {
             const stats = calculateTournamentStats(t.id);
             return (
               <button
@@ -780,51 +697,87 @@ const PublicDashboard: React.FC = () => {
               </button>
             );
           })}
-            </div>
-            {totalPages > 1 && (
-              <div className="flex items-center justify-center gap-2 mt-8">
-                <button
-                  disabled={historyPage === 1}
-                  onClick={() => setHistoryPage(p => Math.max(1, p - 1))}
-                  className="p-2 rounded-xl bg-zinc-900 border border-zinc-800 text-zinc-400 disabled:opacity-50 hover:bg-zinc-800 transition-colors cursor-pointer disabled:cursor-not-allowed"
-                >
-                  <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" /></svg>
-                </button>
-                <span className="text-zinc-500 font-bold text-xs uppercase tracking-widest px-4">
-                  Page {historyPage} of {totalPages}
-                </span>
-                <button
-                  disabled={historyPage === totalPages}
-                  onClick={() => setHistoryPage(p => Math.min(totalPages, p + 1))}
-                  className="p-2 rounded-xl bg-zinc-900 border border-zinc-800 text-zinc-400 disabled:opacity-50 hover:bg-zinc-800 transition-colors cursor-pointer disabled:cursor-not-allowed"
-                >
-                  <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" /></svg>
-                </button>
-              </div>
-            )}
-          </>
-        ) : (
-          <RadarEmptyState message="No tournaments found" />
-        )}
+        </div>
+      ) : (
+        <RadarEmptyState message="No tournaments found" />
+      )}
+    </div>
+  );
+
+  const renderOverallPlayerStats = () => {
+    const sortedPlayers = rosterPlayers
+      .map(p => ({ ...p, stats: overallPlayerStats[p.id] || { kills: 0, played: 0 } }))
+      .sort((a, b) => b.stats.kills - a.stats.kills);
+
+    const maxKills = Math.max(...sortedPlayers.map(p => p.stats.kills), 1);
+
+    return (
+      <div className="space-y-6 animate-slide-up">
+        <div className="flex items-center justify-between border-b border-zinc-800/50 pb-4">
+          <h3 className="text-xl font-blanka text-white uppercase tracking-wider">PERFORMANCE BREAKDOWN</h3>
+        </div>
+
+        <div className="glass-card rounded-3xl overflow-hidden border-zinc-800/50">
+          <div className="w-full overflow-x-auto">
+            <table className="w-full text-left whitespace-nowrap">
+              <thead className="bg-zinc-900/50 text-[8px] font-black uppercase tracking-[0.2em] text-zinc-600 border-b border-zinc-900">
+                <tr>
+                  <th className="px-8 py-5">Player</th>
+                  <th className="px-8 py-5">Role</th>
+                  <th className="px-8 py-5">Played</th>
+                  <th className="px-8 py-5">Total Kills</th>
+                  <th className="px-8 py-5 text-right">K/M</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-zinc-900/50">
+                {sortedPlayers.map((p, idx) => (
+                  <tr key={p.id} className="hover:bg-zinc-900/30 transition-colors group">
+                    <td className="px-8 py-6">
+                      <div className="flex items-center gap-3">
+                        <div className="w-8 h-8 bg-zinc-900 border border-zinc-800 rounded overflow-hidden flex items-center justify-center font-blanka text-[10px] text-blue-500">
+                          {p.imageUrl ? (
+                            <img src={p.imageUrl} alt={p.name} className="w-full h-full object-cover" />
+                          ) : (
+                            <>{p.name.charAt(p.name.indexOf('.') + 1)}{p.name.charAt(p.name.indexOf('.') + 2)}</>
+                          )}
+                        </div>
+                        <span className="font-blanka text-xs text-white uppercase tracking-widest">{p.name.split('.')[1] || p.name}</span>
+                      </div>
+                    </td>
+                    <td className="px-8 py-6">
+                      <span className="px-2 py-0.5 bg-zinc-900 border border-zinc-800 text-zinc-500 rounded text-[7px] font-black tracking-widest uppercase">{p.role}</span>
+                    </td>
+                    <td className="px-8 py-6 font-bold text-xs text-zinc-400">{p.stats.played}</td>
+                    <td className="px-8 py-6 font-bold text-xs text-white">{p.stats.kills}</td>
+                    <td className="px-8 py-6 text-right">
+                      <span className="font-blanka text-sm text-neon-green">
+                        {(p.stats.played > 0 ? p.stats.kills / p.stats.played : 0).toFixed(1)}
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
       </div>
     );
   };
 
-
   const renderTeams = () => (
-    <div className="space-y-8 sm:space-y-10 animate-slide-up pb-10">
-      <div className="flex items-center justify-between border-b border-zinc-800/50 pb-5">
-        <div className="min-w-0">
-          <h2 className="text-xl sm:text-3xl font-blanka text-white uppercase leading-tight">CURRENT ROSTER</h2>
+    <div className="space-y-10 animate-slide-up pb-10">
+      <div className="flex items-center justify-between border-b border-zinc-800/50 pb-6">
+        <div>
+          <h2 className="text-3xl font-blanka text-white uppercase">CURRENT ROSTER</h2>
           <p className="text-zinc-500 font-bold text-[9px] uppercase tracking-[0.3em] mt-1">TEAM ELITE</p>
         </div>
-        <div className="flex items-center gap-2 px-3 sm:px-4 py-2 bg-zinc-900 border border-zinc-800 rounded-xl shrink-0 ml-3">
-          <span className="text-[8px] sm:text-[9px] font-black text-zinc-500 uppercase tracking-widest">Size:</span>
+        <div className="flex items-center gap-2 px-4 py-2 bg-zinc-900 border border-zinc-800 rounded-xl">
+          <span className="text-[9px] font-black text-zinc-500 uppercase tracking-widest">Team Size:</span>
           <span className="text-white font-blanka text-sm">05</span>
         </div>
       </div>
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5 sm:gap-8">
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
         {rosterPlayers.map((p, idx) => (
           <div key={p.id} className="glass-card rounded-[2.5rem] p-10 border-zinc-800/50 relative overflow-hidden group hover:border-blue-500/30 transition-all card-hover shadow-2xl">
             <div className="absolute top-0 right-0 w-32 h-32 bg-blue-600/5 rounded-full blur-3xl -mr-16 -mt-16 group-hover:bg-blue-600/10 transition-colors" />
@@ -852,11 +805,11 @@ const PublicDashboard: React.FC = () => {
             <div className="grid grid-cols-2 gap-4 mt-8 pt-8 border-t border-zinc-800/50">
               <div>
                 <p className="text-[8px] font-black text-zinc-700 uppercase tracking-widest">Total Kills</p>
-                <p className="text-xl font-blanka text-white mt-1">{playerStats[p.id]?.kills || 0}</p>
+                <p className="text-xl font-blanka text-white mt-1">{overallPlayerStats[p.id]?.kills || 0}</p>
               </div>
               <div>
                 <p className="text-[8px] font-black text-zinc-700 uppercase tracking-widest">Matches</p>
-                <p className="text-xl font-blanka text-blue-500 mt-1">{playerStats[p.id]?.played || 0}</p>
+                <p className="text-xl font-blanka text-blue-500 mt-1">{overallPlayerStats[p.id]?.played || 0}</p>
               </div>
             </div>
           </div>
@@ -873,6 +826,7 @@ const PublicDashboard: React.FC = () => {
         {currentView === 'dashboard' && (
           <>
             {renderDashboard()}
+            {renderOverallPlayerStats()}
           </>
         )}
         {currentView === 'teams' && renderTeams()}

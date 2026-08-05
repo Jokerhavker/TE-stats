@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { v2 as cloudinary } from 'cloudinary';
+import { requireAuth } from '@/lib/auth';
 
 if (process.env.NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME) {
   cloudinary.config({
@@ -11,6 +12,8 @@ if (process.env.NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME) {
 
 export async function POST(request: NextRequest) {
   try {
+    const auth = await requireAuth(request, ['admin']);
+    if (auth instanceof NextResponse) return auth;
     const { image } = await request.json();
     
     if (!image) {

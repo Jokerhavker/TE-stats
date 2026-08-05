@@ -1,5 +1,6 @@
 import React from 'react';
-import type { Metadata, Viewport } from 'next';
+import type { Metadata } from 'next';
+import Script from 'next/script';
 import './globals.css';
 
 export const metadata: Metadata = {
@@ -8,13 +9,6 @@ export const metadata: Metadata = {
     icons: {
         icon: 'https://files.catbox.moe/d6nc0b.jpg',
     },
-};
-
-export const viewport: Viewport = {
-    width: 'device-width',
-    initialScale: 1,
-    maximumScale: 1,
-    themeColor: '#050505',
 };
 
 export default function RootLayout({

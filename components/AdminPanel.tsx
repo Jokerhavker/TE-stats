@@ -27,6 +27,7 @@ import {
   updateSettings
 } from '@/services/stateManager';
 import { Match, PlayerMatchStats, Tournament, ScheduleItem, TournamentWeek, Player, SystemSettings } from '@/types';
+import { addAuthHeaders, handleAuthError } from '@/lib/clientAuth';
 import AdminSessions from './AdminSessions';
 
 type AdminTab = 'scoring' | 'tournaments' | 'players' | 'ledger' | 'sessions';
@@ -89,7 +90,7 @@ const AdminPanel: React.FC = () => {
   const [editingMatchId, setEditingMatchId] = useState<string | null>(null);
   const [editingTournamentId, setEditingTournamentId] = useState<string | null>(null);
   const [editTournamentNameValue, setEditTournamentNameValue] = useState('');
-  const [tournamentFilter, setTournamentFilter] = useState<'all' | 'official' | 'scrim' | 'done'>('scrim');
+  const [tournamentFilter, setTournamentFilter] = useState<'all' | 'official' | 'scrim' | 'done'>('all');
   const [editRank, setEditRank] = useState<number>(1);
   const [editRankDesc, setEditRankDesc] = useState<string>('Leading by 12 pts');
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
@@ -113,9 +114,14 @@ const AdminPanel: React.FC = () => {
         try {
           const res = await fetch('/api/upload', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: addAuthHeaders({ 'Content-Type': 'application/json' }),
             body: JSON.stringify({ image: reader.result }),
           });
+          if (!res.ok) {
+            handleAuthError(res.status);
+            reject(new Error('Upload failed'));
+            return;
+          }
           const data = await res.json();
           if (data.url) resolve(data.url);
           else reject(new Error(data.error || 'Upload failed'));

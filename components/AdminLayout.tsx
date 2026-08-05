@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect } from 'react';
 import AdminSidebar from './AdminSidebar';
+import { terminateSession, clearStoredSession } from '@/services/sessionManager';
 
 const AdminLayout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
@@ -33,8 +34,16 @@ const AdminLayout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
     };
   }, []);
 
-  const handleLogout = () => {
-    sessionStorage.removeItem('s8ul_user_role');
+  const handleLogout = async () => {
+    const sessionId = sessionStorage.getItem('s8ul_session_id');
+    if (sessionId) {
+      try {
+        await terminateSession(sessionId);
+      } catch {
+        // Local cleanup happens regardless of network success
+      }
+    }
+    clearStoredSession();
     setUserRole(null);
     window.location.href = '/admin/login'; 
   };

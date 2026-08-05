@@ -1,4 +1,5 @@
 import type { AdminSession } from '@/types/index';
+import { addAuthHeaders, handleAuthError, clearAuthSession } from '@/lib/clientAuth';
 
 const SESSION_TIMEOUT = 2 * 24 * 60 * 60 * 1000; // 2 days in milliseconds
 const ACTIVITY_CHECK_INTERVAL = 5 * 60 * 1000; // Check activity every 5 minutes
@@ -10,11 +11,13 @@ const apiFetch = async (endpoint: string, options?: RequestInit) => {
   try {
     const response = await fetch(endpoint, {
       ...options,
+      headers: addAuthHeaders(options?.headers),
       signal: controller.signal
     });
     clearTimeout(timeoutId);
 
     if (!response.ok) {
+      handleAuthError(response.status);
       console.error(`API Error (${response.status}) at ${endpoint}`);
       return null;
     }
@@ -112,6 +115,7 @@ export const clearStoredSession = (): void => {
     sessionStorage.removeItem('s8ul_admin_session');
     sessionStorage.removeItem('s8ul_user_role');
     sessionStorage.removeItem('s8ul_session_id');
+    clearAuthSession();
   }
 };
 

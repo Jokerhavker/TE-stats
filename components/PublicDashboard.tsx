@@ -166,11 +166,9 @@ const PublicDashboard: React.FC = () => {
       return;
     }
 
-    if (
-      selectedWeekId !== 'overall' &&
-      !tournamentWeeks.some(w => w.id === selectedWeekId)
-    ) {
-      setSelectedWeekId('overall');
+    if (selectedWeekId === 'overall' || !tournamentWeeks.some(w => w.id === selectedWeekId)) {
+      const firstWeek = tournamentWeeks[0];
+      if (firstWeek) setSelectedWeekId(firstWeek.id);
     }
   }, [activeCategory, displayTournament?.id, displayTournament?.category, selectedWeekId, weeks]);
 
@@ -265,12 +263,15 @@ const PublicDashboard: React.FC = () => {
 
   const handleCopySummary = () => {
     if (!lastMatch || !displayTournament) return;
-    const killSummary = (lastMatch.playerStats || (lastMatch as any).players || []).map((ps: any) => {
+    const sortedStats = (lastMatch.playerStats || (lastMatch as any).players || []).slice().sort((a: any, b: any) => (b.kills || 0) - (a.kills || 0));
+    const killSummary = sortedStats.map((ps: any) => {
       const p = rosterPlayers.find(i => i.id === ps.playerId || i.id.toLowerCase() === (ps.playerId || '').toLowerCase());
       return `${p?.name || ps.playerId}: ${ps.kills || 0}`;
     }).join('\n');
+    const weekName = weeks.find(w => w.id === lastMatch.weekId)?.name || '';
+    const mapName = (lastMatch as any).mapName || (lastMatch as any).map || '';
     const posPts = POSITION_POINTS[lastMatch.position] || 0;
-    const summary = `${displayTournament.name}\nMatch ${lastMatch.matchNumber}\n\n${killSummary}\nRank: #${lastMatch.position} (${posPts} PTS)\nTotal: ${lastMatch.totalPoints} PTS\n\nOverall Points: ${currentStats.totalPoints} PTS`;
+    const summary = `${displayTournament.name}\n${weekName}\nMatch ${lastMatch.matchNumber}\n${mapName}\n${killSummary}\nRank: #${lastMatch.position} (${posPts} PTS)\nTotal: ${lastMatch.totalPoints} PTS`;
 
     navigator.clipboard.writeText(summary).then(() => {
       setCopyFeedback(true);
@@ -385,17 +386,6 @@ const PublicDashboard: React.FC = () => {
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
-            <button
-              onClick={() => setSelectedWeekId('overall')}
-              className={`px-4 py-2 rounded-xl text-[9px] font-blanka tracking-wider uppercase transition-all cursor-pointer ${
-                selectedWeekId === 'overall'
-                  ? 'bg-purple-600 text-white shadow-md shadow-purple-600/30 scale-[1.02]'
-                  : 'bg-zinc-950/80 text-zinc-400 hover:text-white hover:bg-zinc-800/80 border border-zinc-800'
-              }`}
-            >
-              OVERALL ({matches.filter(m => m.tournamentId === displayTournament?.id).length} M)
-            </button>
-
             {tournamentWeeks.map(w => {
               const weekMatchCount = matches.filter(m => m.tournamentId === displayTournament?.id && m.weekId === w.id).length;
               const isSelected = selectedWeekId === w.id;
@@ -507,6 +497,7 @@ const PublicDashboard: React.FC = () => {
                   <thead className="bg-zinc-900/50 text-[8px] font-black uppercase tracking-[0.2em] text-zinc-600 border-b border-zinc-900">
                     <tr>
                       <th className="px-6 py-4">Match</th>
+                      <th className="px-6 py-4">Map</th>
                       <th className="px-6 py-4">Placement</th>
                       <th className="px-6 py-4">Kills</th>
                       <th className="px-6 py-4">Total Pts</th>
@@ -524,6 +515,9 @@ const PublicDashboard: React.FC = () => {
                               {weeks.find(w => w.id === m.weekId)?.name || 'Unknown Phase'}
                             </span>
                           )}
+                        </td>
+                        <td className="px-6 py-5">
+                          <span className="text-zinc-400 font-bold text-xs uppercase">{(m as any).mapName || (m as any).map || '—'}</span>
                         </td>
                         <td className="px-6 py-5">
                           <span className={`font-blanka text-sm ${m.position === 1 ? 'text-neon-green' : 'text-white'}`}>#{m.position}</span>
@@ -628,7 +622,9 @@ const PublicDashboard: React.FC = () => {
             onClick={() => {
               userCategoryChoice.current = 'official';
               setActiveCategory('official');
-              setSelectedWeekId('overall');
+              const firstOfficial = tournaments.find(t => t.category === 'official');
+              const firstWeek = weeks.filter(w => w.tournamentId === firstOfficial?.id).sort((a, b) => a.order - b.order)[0];
+              setSelectedWeekId(firstWeek ? firstWeek.id : 'overall');
             }}
             className={`px-8 py-3 rounded-xl font-blanka text-sm tracking-widest transition-all ${activeCategory === 'official'
               ? 'bg-blue-600 text-white shadow-[0_0_20px_rgba(37,99,235,0.4)]'
@@ -843,21 +839,23 @@ const PublicDashboard: React.FC = () => {
                     <span className="w-1.5 h-6 bg-blue-600 rounded-full" />
                     Match {selectedMatchStats.matchNumber} Report
                   </h3>
-                  <p className="text-zinc-500 font-bold text-[9px] uppercase tracking-[0.3em] mt-1">Detailed Statistics</p>
+                  <p className="text-zinc-500 font-bold text-[9px] uppercase tracking-[0.3em] mt-1">{(selectedMatchStats as any).mapName || (selectedMatchStats as any).map || 'Unknown Map'} • Detailed Statistics</p>
                 </div>
                 <div className="flex items-center gap-2">
                   <button
                     onClick={() => {
-                      const sortedPlayers = [...selectedMatchStats.playerStats].sort((a, b) => b.kills - a.kills);
-                      let copyText = `${displayTournament?.name || 'ACTIVE TOURNAMENT'}\nMatch ${selectedMatchStats.matchNumber}\n\n`;
+                      const sortedPlayers = [...(selectedMatchStats.playerStats || (selectedMatchStats as any).players || [])].sort((a, b) => (b.kills || 0) - (a.kills || 0));
+                      const weekName = weeks.find(w => w.id === selectedMatchStats.weekId)?.name || '';
+                      const mapName = (selectedMatchStats as any).mapName || (selectedMatchStats as any).map || '';
+                      let copyText = `${displayTournament?.name || 'ACTIVE TOURNAMENT'}\n${weekName}\nMatch ${selectedMatchStats.matchNumber}\n${mapName}\n`;
 
                       sortedPlayers.forEach(stat => {
-                        const p = rosterPlayers.find(p => p.id === stat.playerId);
-                        if (p) copyText += `${p.name}: ${stat.kills}\n`;
+                        const p = rosterPlayers.find(i => i.id === stat.playerId || i.id.toLowerCase() === (stat.playerId || '').toLowerCase());
+                        copyText += `${p?.name || stat.playerId}: ${stat.kills || 0}\n`;
                       });
 
                       const posPts = POSITION_POINTS[selectedMatchStats.position] || 0;
-                      copyText += `Rank: #${selectedMatchStats.position} (${posPts} PTS)\nTotal: ${selectedMatchStats.totalPoints} PTS\n\nOverall Points: ${currentStats.totalPoints} PTS\n\nhttps://${typeof window !== 'undefined' ? window.location.host : 's8ul-elite.com'}`;
+                      copyText += `Rank: #${selectedMatchStats.position} (${posPts} PTS)\nTotal: ${selectedMatchStats.totalPoints} PTS`;
 
                       navigator.clipboard.writeText(copyText);
 

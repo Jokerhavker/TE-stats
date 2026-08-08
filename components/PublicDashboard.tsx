@@ -174,6 +174,11 @@ const PublicDashboard: React.FC = () => {
 
   const isOfficialTournament = (displayTournament?.category || activeCategory) === 'official';
 
+  const selectedWeek = tournamentWeeks.find(w => w.id === selectedWeekId);
+  const rankSource = (isOfficialTournament && selectedWeekId !== 'overall' && selectedWeek) ? selectedWeek : null;
+  const rankValue = rankSource?.currentRank ?? displayTournament?.currentRank ?? 1;
+  const rankDesc = rankSource?.rankDescription ?? displayTournament?.rankDescription ?? 'Leading by 12 pts';
+
   const tournamentMatches = matches
     .filter(m => m.tournamentId === displayTournament?.id)
     .filter(m => isOfficialTournament && selectedWeekId !== 'overall' ? m.weekId === selectedWeekId : true)
@@ -271,7 +276,7 @@ const PublicDashboard: React.FC = () => {
     const weekName = weeks.find(w => w.id === lastMatch.weekId)?.name || '';
     const mapName = (lastMatch as any).mapName || (lastMatch as any).map || '';
     const posPts = POSITION_POINTS[lastMatch.position] || 0;
-    const summary = `${displayTournament.name}\n${weekName}\nMatch ${lastMatch.matchNumber}\n${mapName}\n${killSummary}\nRank: #${lastMatch.position} (${posPts} PTS)\nTotal: ${lastMatch.totalPoints} PTS`;
+    const summary = `${displayTournament.name}\n${weekName}\nMatch ${lastMatch.matchNumber}\n${mapName}\n\n${killSummary}\n\nRank: #${lastMatch.position} (${posPts} PTS)\nTotal: ${lastMatch.totalPoints} PTS\nOverall: ${currentStats.totalPoints} PTS`;
 
     navigator.clipboard.writeText(summary).then(() => {
       setCopyFeedback(true);
@@ -433,8 +438,8 @@ const PublicDashboard: React.FC = () => {
             <svg className="w-6 sm:w-7 md:w-8 h-6 sm:h-7 md:h-8" fill="currentColor" viewBox="0 0 24 24"><path d="M19 5h-2V3H7v2H5c-1.1 0-2 .9-2 2v1c0 2.55 1.92 4.63 4.39 4.94A5.01 5.01 0 0011 15.9V19H7v2h10v-2h-4v-3.1a5.01 5.01 0 003.61-2.96C20.08 10.63 22 8.55 22 6V5c0-1.1-.9-2-2-2zM5 7h2v2H5V7zm14 2h-2V7h2v2z" /></svg>
           </div>
           <p className="text-[8px] sm:text-[8px] md:text-[9px] font-bold text-zinc-500 uppercase tracking-widest mb-2 sm:mb-3\">Current Rank</p>
-          <p className="text-4xl sm:text-4xl md:text-5xl font-blanka text-white leading-none\">#{displayTournament?.currentRank || 1}</p>
-          <p className="mt-2 sm:mt-3 text-[8px] sm:text-[8px] md:text-[9px] text-zinc-600 font-bold uppercase\">{displayTournament?.rankDescription || 'Leading by 12 pts'}</p>
+          <p className="text-4xl sm:text-4xl md:text-5xl font-blanka text-white leading-none\">#{rankValue}</p>
+          <p className="mt-2 sm:mt-3 text-[8px] sm:text-[8px] md:text-[9px] text-zinc-600 font-bold uppercase\">{rankDesc}</p>
         </div>
 
         <div className="glass-card p-4 sm:p-5 md:p-6 rounded-2xl sm:rounded-2xl md:rounded-3xl border-zinc-800/50 relative overflow-hidden group hover:border-red-500/30 transition-all">
@@ -847,7 +852,7 @@ const PublicDashboard: React.FC = () => {
                       const sortedPlayers = [...(selectedMatchStats.playerStats || (selectedMatchStats as any).players || [])].sort((a, b) => (b.kills || 0) - (a.kills || 0));
                       const weekName = weeks.find(w => w.id === selectedMatchStats.weekId)?.name || '';
                       const mapName = (selectedMatchStats as any).mapName || (selectedMatchStats as any).map || '';
-                      let copyText = `${displayTournament?.name || 'ACTIVE TOURNAMENT'}\n${weekName}\nMatch ${selectedMatchStats.matchNumber}\n${mapName}\n`;
+                      let copyText = `${displayTournament?.name || 'ACTIVE TOURNAMENT'}\n${weekName}\nMatch ${selectedMatchStats.matchNumber}\n${mapName}\n\n`;
 
                       sortedPlayers.forEach(stat => {
                         const p = rosterPlayers.find(i => i.id === stat.playerId || i.id.toLowerCase() === (stat.playerId || '').toLowerCase());
@@ -855,7 +860,7 @@ const PublicDashboard: React.FC = () => {
                       });
 
                       const posPts = POSITION_POINTS[selectedMatchStats.position] || 0;
-                      copyText += `Rank: #${selectedMatchStats.position} (${posPts} PTS)\nTotal: ${selectedMatchStats.totalPoints} PTS`;
+                      copyText += `\nRank: #${selectedMatchStats.position} (${posPts} PTS)\nTotal: ${selectedMatchStats.totalPoints} PTS\nOverall: ${currentStats.totalPoints} PTS`;
 
                       navigator.clipboard.writeText(copyText);
 

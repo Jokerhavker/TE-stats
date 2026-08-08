@@ -19,6 +19,7 @@ import {
   getWeeks,
   createWeek,
   deleteWeek,
+  updateWeek,
   getPlayers,
   createPlayer,
   updatePlayer,
@@ -186,11 +187,16 @@ const AdminPanel: React.FC = () => {
 
   useEffect(() => {
     const currentT = tournaments.find(t => t.id === displayEventId);
-    if (currentT) {
+    if (!currentT) return;
+    const currentWeek = selectedWeekId ? weeks.find(w => w.id === selectedWeekId && w.tournamentId === displayEventId) : undefined;
+    if (currentWeek) {
+      setEditRank(currentWeek.currentRank || 1);
+      setEditRankDesc(currentWeek.rankDescription || 'Leading by 12 pts');
+    } else {
       setEditRank(currentT.currentRank || 1);
       setEditRankDesc(currentT.rankDescription || 'Leading by 12 pts');
     }
-  }, [tournaments, displayEventId]);
+  }, [tournaments, weeks, displayEventId, selectedWeekId]);
 
   const togglePlayer = (id: string) => {
     if (id === DID_NOT_PLAY_ID) {
@@ -361,7 +367,7 @@ const AdminPanel: React.FC = () => {
   }, [displayEventId, selectedWeekId, matches, editingMatchId]);
 
   const handleCreateTournament = async (e: React.FormEvent) => { e.preventDefault(); if (!newTournament.name.trim()) return; await createTournament(newTournament); await loadData(); setNewTournament({ name: '', startDate: new Date().toISOString().split('T')[0], endDate: new Date().toISOString().split('T')[0], status: 'active', category: 'scrim' }); setShowTournamentForm(false); showToast('Tournament created'); };
-  const handleUpdateLiveStandings = async (e: React.FormEvent) => { e.preventDefault(); const currentT = tournaments.find(t => t.id === displayEventId); if (!currentT) return; await updateTournament(currentT.id, { currentRank: editRank, rankDescription: editRankDesc }); await loadData(); };
+  const handleUpdateLiveStandings = async (e: React.FormEvent) => { e.preventDefault(); const currentT = tournaments.find(t => t.id === displayEventId); if (!currentT) return; const currentWeek = selectedWeekId ? weeks.find(w => w.id === selectedWeekId && w.tournamentId === displayEventId) : undefined; if (currentWeek) { await updateWeek(currentWeek.id, { currentRank: editRank, rankDescription: editRankDesc }); } else { await updateTournament(currentT.id, { currentRank: editRank, rankDescription: editRankDesc }); } await loadData(); };
 
   const handleCreatePlayerSubmit = async (e: React.FormEvent) => {
     e.preventDefault();

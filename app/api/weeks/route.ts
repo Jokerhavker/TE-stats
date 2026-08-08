@@ -35,6 +35,25 @@ export async function POST(request: NextRequest) {
     }
 }
 
+export async function PATCH(request: NextRequest) {
+    try {
+        const auth = await requireAuth(request);
+        if (auth instanceof NextResponse) return auth;
+        const { db } = await getDb();
+        const collection = db.collection('tournament_weeks');
+        const { searchParams } = new URL(request.url);
+        const id = searchParams.get('id');
+        const body = await request.json();
+
+        const { _id, id: bodyId, ...updateData } = body;
+        const result = await collection.updateOne({ id }, { $set: updateData });
+        return NextResponse.json(result);
+    } catch (error) {
+        console.error("API Error:", error);
+        return NextResponse.json({ error: 'Database operations failed' }, { status: 500 });
+    }
+}
+
 export async function DELETE(request: NextRequest) {
     try {
         const auth = await requireAuth(request);

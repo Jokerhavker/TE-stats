@@ -244,6 +244,18 @@ export const deleteWeek = async (id: string): Promise<void> => {
   dispatchUpdate();
 };
 
+export const updateWeek = async (id: string, updates: Partial<Omit<TournamentWeek, 'id' | 'tournamentId'>>): Promise<void> => {
+  const local = getLocal<TournamentWeek>('s8ul_weeks');
+  setLocal('s8ul_weeks', local.map(w => w.id === id ? { ...w, ...updates } : w));
+
+  await apiFetch(`/api/weeks?id=${id}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(updates)
+  });
+  dispatchUpdate();
+};
+
 // ── Dashboard View ──────────────────────────────────────────────────
 export const getDashboardView = (): string => {
   if (typeof window !== 'undefined') return sessionStorage.getItem('s8ul_dashboard_view') || 'dashboard';

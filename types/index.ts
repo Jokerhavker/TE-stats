@@ -61,6 +61,8 @@ export interface TournamentWeek {
   tournamentId: string;
   name: string;
   order: number;
+  currentRank?: number;
+  rankDescription?: string;
 }
 
 export interface SystemSettings {

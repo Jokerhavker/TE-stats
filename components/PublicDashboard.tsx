@@ -174,12 +174,6 @@ const PublicDashboard: React.FC = () => {
     .filter(w => w.tournamentId === displayTournament?.id)
     .sort((a, b) => a.order - b.order);
 
-  const latestMatchTs = (tId?: string) => matches.reduce((mx, m) => (m.tournamentId && m.tournamentId === tId ? Math.max(mx, m.timestamp || 0) : mx), 0);
-
-  const recentScrims = activeCategory === 'scrim'
-    ? [...categoryTournaments].sort((a, b) => latestMatchTs(b.id) - latestMatchTs(a.id) || (b.createdAt || 0) - (a.createdAt || 0)).slice(0, 10)
-    : [];
-
   useEffect(() => {
     const isOfficial = (displayTournament?.category || activeCategory) === 'official';
     if (!isOfficial || !displayTournament) {
@@ -430,36 +424,6 @@ const PublicDashboard: React.FC = () => {
               );
             })}
           </div>
-        </div>
-      )}
-
-      {/* SCRIMS SELECTOR BAR */}
-      {activeCategory === 'scrim' && recentScrims.length > 0 && (
-        <div className="bg-zinc-900/60 border border-blue-500/25 rounded-2xl p-3.5 sm:p-4 backdrop-blur-md flex flex-wrap items-center gap-2 shadow-xl">
-          <span className="text-[10px] font-blanka text-blue-400 uppercase tracking-widest mr-1 flex items-center gap-2.5">
-            <span className="w-2 h-2 rounded-full bg-blue-500 animate-pulse" /> SCRIMS:
-          </span>
-          {recentScrims.map(s => {
-            const count = matches.filter(m => m.tournamentId === s.id).length;
-            const isSelected = displayTournament?.id === s.id;
-            return (
-              <button
-                key={s.id}
-                onClick={() => {
-                  userCategoryChoice.current = 'scrim';
-                  setSelectedTournamentId(s.id);
-                  setSelectedWeekId('overall');
-                }}
-                className={`px-3.5 py-2 rounded-xl text-[9px] font-blanka tracking-wider uppercase transition-all cursor-pointer ${
-                  isSelected
-                    ? 'bg-blue-600 text-white shadow-md shadow-blue-600/30 scale-[1.02]'
-                    : 'bg-zinc-950/80 text-zinc-400 hover:text-white hover:bg-zinc-800/80 border border-zinc-800'
-                }`}
-              >
-                {s.name} ({count} M)
-              </button>
-            );
-          })}
         </div>
       )}
 

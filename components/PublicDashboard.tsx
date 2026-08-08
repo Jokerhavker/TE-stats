@@ -93,7 +93,7 @@ const PublicDashboard: React.FC = () => {
 
     const stillValid = inCategory.some(t => t.id === selectedTournamentId);
     if (!stillValid) {
-      const activeInCategory = inCategory.find(t => t.active);
+      const activeInCategory = inCategory.find(t => t.active && matches.some(m => m.tournamentId === t.id));
       const preferred = activeInCategory
         || (activeCategory === 'scrim' ? pickCurrentScrim(inCategory, matches) : undefined)
         || inCategory[0];
@@ -112,7 +112,7 @@ const PublicDashboard: React.FC = () => {
 
       // Automatically activate official or scrim category based on active tournament or mode
       // (only on first load; respect a manual toggle afterwards)
-      const activeT = (t || []).find(curr => curr.active);
+      const activeT = (t || []).find(curr => curr.active && (m || []).some(mm => mm.tournamentId === curr.id));
       if (activeT) {
         if (activeT.category && !userCategoryChoice.current) {
           setActiveCategory(activeT.category);
@@ -148,9 +148,24 @@ const PublicDashboard: React.FC = () => {
 
   const categoryTournaments = tournaments.filter(t => (t.category || 'scrim') === activeCategory);
   const rosterPlayers = players.length > 0 ? players : INITIAL_PLAYERS;
-  const displayTournament = (selectedTournamentId ? categoryTournaments.find(t => t.id === selectedTournamentId) : null)
-    || categoryTournaments.find(t => t.active)
-    || (activeCategory === 'scrim' ? pickCurrentScrim(categoryTournaments, matches) : categoryTournaments[0])
+  const hasMatches = (tId?: string) => !!tId && matches.some(m => m.tournamentId === tId);
+
+  const resolveDisplayTournament = () => {
+    if (selectedTournamentId) {
+      const sel = categoryTournaments.find(t => t.id === selectedTournamentId);
+      if (sel) return sel;
+    }
+    if (activeCategory === 'scrim') {
+      return pickCurrentScrim(categoryTournaments, matches)
+        || categoryTournaments.find(t => t.active)
+        || categoryTournaments[0];
+    }
+    return categoryTournaments.find(t => t.active && hasMatches(t.id))
+      || categoryTournaments.find(t => t.active)
+      || categoryTournaments[0];
+  };
+
+  const displayTournament = resolveDisplayTournament()
     || tournaments.find(t => t.id === selectedTournamentId)
     || tournaments.find(t => t.active)
     || tournaments[0];
@@ -158,6 +173,12 @@ const PublicDashboard: React.FC = () => {
   const tournamentWeeks = weeks
     .filter(w => w.tournamentId === displayTournament?.id)
     .sort((a, b) => a.order - b.order);
+
+  const latestMatchTs = (tId?: string) => matches.reduce((mx, m) => (m.tournamentId && m.tournamentId === tId ? Math.max(mx, m.timestamp || 0) : mx), 0);
+
+  const recentScrims = activeCategory === 'scrim'
+    ? [...categoryTournaments].sort((a, b) => latestMatchTs(b.id) - latestMatchTs(a.id) || (b.createdAt || 0) - (a.createdAt || 0)).slice(0, 10)
+    : [];
 
   useEffect(() => {
     const isOfficial = (displayTournament?.category || activeCategory) === 'official';
@@ -351,7 +372,7 @@ const PublicDashboard: React.FC = () => {
               userCategoryChoice.current = 'scrim';
               setActiveCategory('scrim');
               const scrims = tournaments.filter(t => (t.category || 'scrim') === 'scrim');
-              const currentScrim = scrims.find(t => t.active) || pickCurrentScrim(scrims, matches);
+              const currentScrim = scrims.find(t => t.active && matches.some(m => m.tournamentId === t.id)) || pickCurrentScrim(scrims, matches);
               if (currentScrim) setSelectedTournamentId(currentScrim.id);
             }}
             className={`px-3.5 py-1.5 rounded-xl text-[9px] font-blanka tracking-widest uppercase transition-all cursor-pointer ${
@@ -409,6 +430,36 @@ const PublicDashboard: React.FC = () => {
               );
             })}
           </div>
+        </div>
+      )}
+
+      {/* SCRIMS SELECTOR BAR */}
+      {activeCategory === 'scrim' && recentScrims.length > 0 && (
+        <div className="bg-zinc-900/60 border border-blue-500/25 rounded-2xl p-3.5 sm:p-4 backdrop-blur-md flex flex-wrap items-center gap-2 shadow-xl">
+          <span className="text-[10px] font-blanka text-blue-400 uppercase tracking-widest mr-1 flex items-center gap-2.5">
+            <span className="w-2 h-2 rounded-full bg-blue-500 animate-pulse" /> SCRIMS:
+          </span>
+          {recentScrims.map(s => {
+            const count = matches.filter(m => m.tournamentId === s.id).length;
+            const isSelected = displayTournament?.id === s.id;
+            return (
+              <button
+                key={s.id}
+                onClick={() => {
+                  userCategoryChoice.current = 'scrim';
+                  setSelectedTournamentId(s.id);
+                  setSelectedWeekId('overall');
+                }}
+                className={`px-3.5 py-2 rounded-xl text-[9px] font-blanka tracking-wider uppercase transition-all cursor-pointer ${
+                  isSelected
+                    ? 'bg-blue-600 text-white shadow-md shadow-blue-600/30 scale-[1.02]'
+                    : 'bg-zinc-950/80 text-zinc-400 hover:text-white hover:bg-zinc-800/80 border border-zinc-800'
+                }`}
+              >
+                {s.name} ({count} M)
+              </button>
+            );
+          })}
         </div>
       )}
 
